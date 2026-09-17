@@ -107,6 +107,63 @@ export function setLabel(id, s, cfg) {
   }
   return `${fmtNum(s.w || 0)}×${reps}` + effortTail(s)
 }
+
+// Clean readable summary of logged sets for workout detail / history
+// e.g. "3×5 reps - 55 kg", "3×5 reps - 55/50/50 kg", "(12/10/8) reps - 50 kg"
+export function formatSetsSummary(doneSets, cfg, unit = 'kg', exId) {
+  if (!doneSets || !doneSets.length) return t('no sets')
+  const c = cfg || { id: exId }
+  const mode = modeOf(c)
+  if (mode === 'cardio') return doneSets.map(s => setLabel(c.id, s, c)).join(' · ')
+  if (mode === 'time') {
+    const allSecEqual = doneSets.every(s => (s.sec || 0) === (doneSets[0].sec || 0))
+    const allWEqual = doneSets.every(s => (s.w || 0) === (doneSets[0].w || 0))
+    if (allSecEqual && allWEqual) {
+      const load = doneSets[0].w > 0 ? ` - ${fmtNum(doneSets[0].w)} ${unit}` : ''
+      return `${doneSets.length} × ${fmtSec(doneSets[0].sec || 0)}${load}`
+    }
+    return doneSets.map(s => setLabel(c.id, s, c)).join(' · ')
+  }
+
+  const n = doneSets.length
+  const reps = doneSets.map(s => s.r || 0)
+  const weights = doneSets.map(s => s.w || 0)
+  const allRepsEqual = reps.every(r => r === reps[0])
+  const allWeightsEqual = weights.every(w => w === weights[0])
+  const bw = isBw({ ...c, id: c.id ?? exId })
+
+  if (allRepsEqual) {
+    const rStr = `${reps[0]} reps`
+    if (allWeightsEqual) {
+      if (weights[0] > 0) {
+        const sign = bw ? '+' : ''
+        return `${n}×${rStr} - ${sign}${fmtNum(weights[0])} ${unit}`
+      }
+      return `${n}×${rStr}`
+    }
+    const wStr = weights.map(w => (bw && w > 0 ? '+' : '') + fmtNum(w)).join('/')
+    return `${n}×${rStr} - ${wStr} ${unit}`
+  }
+
+  if (allWeightsEqual) {
+    const rStr = `(${reps.join('/')}) reps`
+    if (weights[0] > 0) {
+      const sign = bw ? '+' : ''
+      return `${rStr} - ${sign}${fmtNum(weights[0])} ${unit}`
+    }
+    return rStr
+  }
+
+  return doneSets.map(s => {
+    const r = s.r || 0
+    const w = s.w || 0
+    if (w > 0) {
+      const sign = bw ? '+' : ''
+      return `${r} reps - ${sign}${fmtNum(w)} ${unit}`
+    }
+    return `${r} reps`
+  }).join(' · ')
+}
 // Default config for a freshly added exercise.
 export function defaultConfig(id, mode) {
   const m = mode || modeOf({ id })

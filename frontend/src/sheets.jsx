@@ -3,7 +3,7 @@ import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
 import { EXDB, EXIDX, BODYPARTS, isCardio, isBodyweightEq, allExercises, equipmentOf } from './lib/exercises.js'
 import { fmtDate, fmtNum, fmtVol, fmtDur, durPart, todayISO, uid, exCount, DAYN, MONTHS_LONG, ACCENTS } from './lib/format.js'
-import { lastEntryFor, bestWeightFor, buildSets, effectiveRoutineId, workoutVolume, setsDone, setsDoneActive, lastBW, supersetUnits, unitOf, setLabel, defaultConfig, cleanupSg, modeOf, effortOf, isBw, isPerSide, sideReps } from './lib/history.js'
+import { lastEntryFor, bestWeightFor, buildSets, effectiveRoutineId, workoutVolume, setsDone, setsDoneActive, lastBW, supersetUnits, unitOf, setLabel, formatSetsSummary, defaultConfig, cleanupSg, modeOf, effortOf, isBw, isPerSide, sideReps } from './lib/history.js'
 import { beep, vibrate } from './lib/sound.js'
 import { t, instrFor, getLang, INSTR_LANGS } from './lib/i18n.js'
 import { nav } from './lib/nav.js'
@@ -11,7 +11,7 @@ import { starterRoutines } from './lib/starter.js'
 import Media, { Thumb } from './components/Media.jsx'
 import Stepper from './components/Stepper.jsx'
 import Icon from './components/Icon.jsx'
-import { Button, Slider, Switch, Segmented, SelectRow, Row } from './components/ui.jsx'
+import { Button, Slider, Switch, Segmented, SelectRow, Row, AutoTextArea, CleanNumInput } from './components/ui.jsx'
 import { glyphOf, GLYPH_GROUPS, DEFAULT_GLYPH } from './lib/glyphs.js'
 import BodyMap from './components/BodyMap.jsx'
 import { loadOfWorkouts } from './lib/muscles.js'
@@ -284,6 +284,11 @@ function ExerciseDetail({ ex, close }) {
   const st = useStore(s => s.S)
   const last = lastEntryFor(st, ex.id)
   const best = bestWeightFor(st, ex.id)
+
+  const workoutsWithEx = (st.workouts || [])
+    .filter(w => (w.entries || []).some(e => e.id === ex.id))
+    .sort((a, b) => (b.d > a.d ? 1 : b.d < a.d ? -1 : (b.start || 0) - (a.start || 0)))
+
   return <>
     <h3 className="capitalize">{ex.n}</h3>
     <Media ex={ex} />
@@ -294,8 +299,43 @@ function ExerciseDetail({ ex, close }) {
       {(ex.sm || []).slice(0, 3).map((s, i) => <span key={i} className="tag">{t(s)}</span>)}
     </div>
     {ex.desc && <div className="exnote">{ex.desc}</div>}
-    {best > 0 && <div className="small row" style={{ marginBottom: 6, gap: 5 }}><Icon name="trophy" style={{ fontSize: 14, color: 'var(--yellow)' }} />{t('Best:')} <b className="accent">{fmtNum(best)} {st.unit}</b>{last ? ` · ${t('last')} ${fmtDate(last.d)}: ${last.sets.map(s => setLabel(ex.id, s, last.target)).join(', ')}` : ''}</div>}
-    <Button variant="primary" icon="plus" style={{ margin: '10px 0 4px' }} onClick={() => addToRoutineSheet(ex)}>{t('Add to my plan')}</Button>
+    {best > 0 && <div className="small row" style={{ marginBottom: 6, gap: 5 }}><Icon name="trophy" style={{ fontSize: 14, color: 'var(--yellow)' }} />{t('Best:')} <b className="accent">{fmtNum(best)} {st.unit}</b></div>}
+
+    {/* Past workouts where this exercise was used */}
+    <h4 className="sec" style={{ marginTop: 16, marginBottom: 8 }}>{t('Past workouts with this exercise')} ({workoutsWithEx.length})</h4>
+    {workoutsWithEx.length > 0 ? (
+      <div className="list" style={{ marginBottom: 14 }}>
+        {workoutsWithEx.map(w => {
+          const entry = (w.entries || []).find(e => e.id === ex.id)
+          const doneSets = (entry?.sets || []).filter(s => s.done)
+          return (
+            <div key={w.id} className="item tappable" style={{ cursor: 'pointer' }} onClick={() => workoutDetailSheet(w)}>
+              <span className="lrow-i" style={{ width: 34, height: 34, borderRadius: 8, fontSize: 18, background: w.wod ? 'color-mix(in srgb,var(--orange) 16%,transparent)' : 'var(--surface-3)', color: w.wod ? 'var(--orange)' : 'inherit' }}>
+                <Icon name={w.wod ? 'flame' : 'dumbbell'} />
+              </span>
+              <div className="grow" style={{ minWidth: 0 }}>
+                <div className="row between" style={{ gap: 4 }}>
+                  <div className="tt" style={{ fontWeight: 600, fontSize: 15 }}>{w.name}</div>
+                  <span className="small muted">{fmtDate(w.d, true)}</span>
+                </div>
+                <div className="ss" style={{ color: 'var(--acc)', fontWeight: 500, marginTop: 2 }}>
+                  {formatSetsSummary(doneSets, entry?.target, st.unit, ex.id)}
+                </div>
+                {w.wod && (
+                  <div className="small muted" style={{ marginTop: 2, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    🔥 {w.wod.type || 'WOD'}{w.wod.score ? ` · Score: ${w.wod.score}` : ''}{w.wod.desc ? ` · ${w.wod.desc}` : ''}
+                  </div>
+                )}
+              </div>
+              <Icon name="chevronRight" className="chev" />
+            </div>
+          )
+        })}
+      </div>
+    ) : (
+      <div className="muted small" style={{ marginBottom: 14 }}>{t('No workouts logged with this exercise yet.')}</div>
+    )}
+
     {ex.custom && <div className="row" style={{ gap: 8, marginTop: 8 }}>
       <Button icon="pencil" style={{ flex: 1 }} onClick={() => { close(); customExSheet(ex) }}>{t('Edit')}</Button>
       <Button variant="danger" icon="trash" style={{ flex: 1 }} onClick={() => deleteCustomEx(ex, close)}>{t('Delete')}</Button>
@@ -446,7 +486,11 @@ function ExercisePicker({ onPick, close }) {
       </div>}
       {f.slice(0, shown).map(e => <div key={e.id} className="item" onClick={() => onPick(e)}>
         <Thumb ex={e} /><div className="grow"><div className="tt capitalize">{e.n}</div><div className="ss capitalize">{t(e.tg || e.bp)} · {t(e.eq)}</div></div>
-        {usage[e.id] && <span className="tag acc"><Icon name="starFill" /></span>}<Icon name="plus" className="chev" />
+        {usage[e.id] && <span className="tag acc"><Icon name="starFill" /></span>}
+        <button className="iconbtn" style={{ width: 32, height: 32, marginRight: 2 }} onClick={ev => { ev.stopPropagation(); exerciseDetailSheet(e) }} aria-label={t('Details')}>
+          <Icon name="info" />
+        </button>
+        <Icon name="plus" className="chev" />
       </div>)}
       {f.length === 0 && bp === '★' && <div className="empty">{t('Nothing chosen yet — add exercises and they’ll show up here.')}</div>}
     </div>
@@ -767,7 +811,7 @@ function WorkoutDetail({ w, close }) {
       return <div key={i} className="row" style={{ marginBottom: 12, alignItems: 'flex-start' }}>
         {ex && <Thumb ex={ex} />}
         <div className="grow"><div className="tt capitalize" style={{ fontWeight: 600 }}>{ex ? ex.n : (e.n || e.id)} {w.prs && w.prs.includes(e.id) && <span className="pr"><Icon name="trophy" />PR</span>}</div>
-          <div className="ss">{e.sets.filter(s => s.done).map(s => setLabel(e.id, s, e.target)).join('  ·  ') || t('no sets')}</div></div>
+          <div className="ss">{formatSetsSummary(e.sets.filter(s => s.done), e.target, st.unit, e.id)}</div></div>
       </div>
     })}
     <div className="row" style={{ gap: 8, marginTop: 14 }}>
@@ -909,7 +953,7 @@ function EditWorkout({ w: origW, close }) {
           </div>
           <div style={{ marginBottom: 8 }}>
             <div className="muted small" style={{ marginBottom: 4 }}>{t('WOD Description')}</div>
-            <textarea className="input" rows={2} style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 14, minHeight: 48 }} value={wod.desc || ''} onChange={e => setWod({ ...wod, desc: e.target.value })} />
+            <AutoTextArea value={wod.desc || ''} onChange={e => setWod({ ...wod, desc: e.target.value })} />
           </div>
           <div>
             <div className="muted small" style={{ marginBottom: 4 }}>{t('Notes / Sensations')}</div>
@@ -977,12 +1021,12 @@ function EditWorkout({ w: origW, close }) {
               </div>
               <span className="small muted" style={{ width: 14, textAlign: 'center' }}>{setIdx + 1}</span>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <input type="number" step="0.5" className="input" style={{ padding: '6px 8px' }} value={s.w ?? 0} onChange={ev => setSetField(entryIdx, setIdx, 'w', +ev.target.value || 0)} />
-                <span className="small muted">{st.unit}</span>
+                <CleanNumInput step="1" placeholder="0" value={s.r ?? 0} onChange={v => setSetField(entryIdx, setIdx, 'r', v)} style={{ padding: '6px 8px' }} />
+                <span className="small muted">reps</span>
               </div>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <input type="number" step="1" className="input" style={{ padding: '6px 8px' }} value={s.r ?? 0} onChange={ev => setSetField(entryIdx, setIdx, 'r', +ev.target.value || 0)} />
-                <span className="small muted">reps</span>
+                <CleanNumInput step="0.5" placeholder="0" value={s.w ?? 0} onChange={v => setSetField(entryIdx, setIdx, 'w', v)} style={{ padding: '6px 8px' }} />
+                <span className="small muted">{st.unit}</span>
               </div>
               <button className="iconbtn" style={{ width: 24, height: 24 }} onClick={() => removeSetFromEntry(entryIdx, setIdx)}>
                 <Icon name="xmark" />
@@ -1162,7 +1206,7 @@ function LogPastWorkout({ initialDate, initialRoutineId, close }) {
           </div>
           <div style={{ marginBottom: 8 }}>
             <div className="muted small" style={{ marginBottom: 4 }}>{t('WOD Description')}</div>
-            <textarea className="input" rows={2} style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 14, minHeight: 48 }} placeholder="ej. 200m KB carry, 80 KB tater, 60 knees to chest, 40 KB push press, 200m run" value={wod.desc || ''} onChange={e => setWod({ ...wod, desc: e.target.value })} />
+            <AutoTextArea placeholder="ej. 200m KB carry, 80 KB tater, 60 knees to chest, 40 KB push press, 200m run" value={wod.desc || ''} onChange={e => setWod({ ...wod, desc: e.target.value })} />
           </div>
           <div>
             <div className="muted small" style={{ marginBottom: 4 }}>{t('Notes / Sensations')}</div>
@@ -1230,12 +1274,12 @@ function LogPastWorkout({ initialDate, initialRoutineId, close }) {
               </div>
               <span className="small muted" style={{ width: 14, textAlign: 'center' }}>{setIdx + 1}</span>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <input type="number" step="0.5" className="input" style={{ padding: '6px 8px' }} value={s.w ?? 0} onChange={ev => setSetField(entryIdx, setIdx, 'w', +ev.target.value || 0)} />
-                <span className="small muted">{st.unit}</span>
+                <CleanNumInput step="1" placeholder="0" value={s.r ?? 0} onChange={v => setSetField(entryIdx, setIdx, 'r', v)} style={{ padding: '6px 8px' }} />
+                <span className="small muted">reps</span>
               </div>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <input type="number" step="1" className="input" style={{ padding: '6px 8px' }} value={s.r ?? 0} onChange={ev => setSetField(entryIdx, setIdx, 'r', +ev.target.value || 0)} />
-                <span className="small muted">reps</span>
+                <CleanNumInput step="0.5" placeholder="0" value={s.w ?? 0} onChange={v => setSetField(entryIdx, setIdx, 'w', v)} style={{ padding: '6px 8px' }} />
+                <span className="small muted">{st.unit}</span>
               </div>
               <button className="iconbtn" style={{ width: 24, height: 24 }} onClick={() => removeSetFromEntry(entryIdx, setIdx)}>
                 <Icon name="xmark" />

@@ -67,6 +67,24 @@ function Sheet({ sheet }) {
 export default function Modals() {
   const sheets = useUI(s => s.sheets)
 
+  // sync visualViewport height for mobile keyboards
+  useEffect(() => {
+    const onResize = () => {
+      if (window.visualViewport) {
+        document.documentElement.style.setProperty('--vvh', `${window.visualViewport.height}px`)
+      }
+    }
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', onResize)
+      window.visualViewport.addEventListener('scroll', onResize)
+      onResize()
+      return () => {
+        window.visualViewport.removeEventListener('resize', onResize)
+        window.visualViewport.removeEventListener('scroll', onResize)
+      }
+    }
+  }, [])
+
   // lock the page behind any open sheet (iOS-safe)
   useEffect(() => {
     if (!sheets.length) return

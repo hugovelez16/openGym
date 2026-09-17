@@ -1,7 +1,8 @@
-import { EXDB } from './exercises-data.js'
+import { EXDB as RAW_EXDB } from './exercises-data.js'
+import { CROSSFIT_EX } from './crossfit-exercises.js'
 import { t } from './i18n.js'
 
-export { EXDB }
+export const EXDB = [...CROSSFIT_EX, ...RAW_EXDB]
 export const EXIDX = {}
 EXDB.forEach(e => { EXIDX[e.id] = e })
 export const BODYPARTS = [...new Set(EXDB.map(e => e.bp))].sort()

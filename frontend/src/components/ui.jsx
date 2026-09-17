@@ -32,6 +32,7 @@ export function NumberField({ value, onChange, decimal = true, nullable = false,
     let s = raw.replace(/,/g, '.').replace(/[^0-9.]/g, '')
     const i = s.indexOf('.')
     if (i !== -1) s = decimal ? s.slice(0, i + 1) + s.slice(i + 1).replace(/\./g, '') : s.slice(0, i)
+    if (s.length > 1 && s.startsWith('0') && s[1] !== '.') s = s.replace(/^0+/, '')
     const n = s === '' || s === '.' ? (nullable ? null : 0) : Math.max(0, parseFloat(s))
     committed.current = n
     setDraft(s)
@@ -51,6 +52,36 @@ export function NumberField({ value, onChange, decimal = true, nullable = false,
   )
 }
 
+export function CleanNumInput({ value, onChange, placeholder = '0', step = '1', className = 'input', style, ...rest }) {
+  const [draft, setDraft] = useState(null)
+  const displayVal = draft !== null ? draft : (value === 0 || value == null ? '' : String(value))
+
+  const commit = raw => {
+    let s = raw.replace(/,/g, '.').replace(/[^0-9.]/g, '')
+    const i = s.indexOf('.')
+    if (i !== -1) s = s.slice(0, i + 1) + s.slice(i + 1).replace(/\./g, '')
+    if (s.length > 1 && s.startsWith('0') && s[1] !== '.') s = s.replace(/^0+/, '')
+    const n = s === '' || s === '.' ? 0 : Math.max(0, parseFloat(s) || 0)
+    setDraft(s)
+    onChange(n)
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      className={className}
+      style={style}
+      placeholder={placeholder}
+      value={displayVal}
+      onFocus={e => e.target.select()}
+      onChange={e => commit(e.target.value)}
+      onBlur={() => setDraft(null)}
+      {...rest}
+    />
+  )
+}
+
 // forwardRef so callers can focus it or read its value imperatively
 export const TextField = forwardRef(function TextField({ className = '', ...rest }, ref) {
   return <input ref={ref} className={'field ' + className} {...rest} />
@@ -58,6 +89,41 @@ export const TextField = forwardRef(function TextField({ className = '', ...rest
 
 export function TextArea({ className = '', ...rest }) {
   return <textarea className={'field area ' + className} {...rest} />
+}
+
+export function AutoTextArea({ value, onChange, minRows = 2, maxRows = 6, className = '', style, ...rest }) {
+  const ref = useRef(null)
+
+  const adjustHeight = () => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    const computed = window.getComputedStyle(el)
+    const lineHeight = parseFloat(computed.lineHeight) || 20
+    const padding = (parseFloat(computed.paddingTop) || 0) + (parseFloat(computed.paddingBottom) || 0)
+    const minH = lineHeight * minRows + padding
+    const maxH = lineHeight * maxRows + padding
+    const newH = Math.min(Math.max(el.scrollHeight, minH), maxH)
+    el.style.height = `${newH}px`
+  }
+
+  useEffect(() => {
+    adjustHeight()
+  }, [value])
+
+  return (
+    <textarea
+      ref={ref}
+      className={'field area ' + className}
+      style={{ resize: 'none', overflowY: 'auto', minHeight: '48px', lineHeight: '1.4', ...style }}
+      value={value || ''}
+      onChange={e => {
+        if (onChange) onChange(e)
+        adjustHeight()
+      }}
+      {...rest}
+    />
+  )
 }
 
 export function SearchField({ value, onChange, onClear, ...rest }) {

@@ -576,8 +576,13 @@ export default {
   'Add strength exercise': 'Añadir ejercicio de fuerza',
   'Save workout': 'Guardar entrenamiento',
   'Workout logged to history': 'Entrenamiento guardado en el historial',
-  'Add at least one exercise or WOD details': 'Añade al menos un ejercicio o los datos del WOD',
+  'Strength / Skill weights + WOD (AMRAP, For Time, EMOM...) in one go.': 'Pesos de Fuerza / Skill + WOD (AMRAP, For Time, EMOM...) en una sola pantalla.',
+  'Live workout': 'Entrenamiento en directo',
+  'Start live workout': 'Empezar entreno en directo',
+  'Saved routines': 'Rutinas guardadas',
   'Move up': 'Subir',
   'Move down': 'Bajar',
+  'Past workouts with this exercise': 'Entrenamientos con este ejercicio',
+  'No workouts logged with this exercise yet.': 'Aún no hay entrenamientos registrados con este ejercicio.',
 }
 
