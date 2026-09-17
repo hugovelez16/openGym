@@ -1,0 +1,22 @@
+# Environment and Secrets
+.env
+.env.*
+!.env.example
+
+# Runtime Database & User State
+data/
+!data/.gitkeep
+
+# Media files (downloaded via media container)
+media/
+!media/.gitkeep
+
+# Node & Build artifacts
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Agent definitions and skills
+.agents/
+

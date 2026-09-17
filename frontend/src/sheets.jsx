@@ -751,6 +751,17 @@ function WorkoutDetail({ w, close }) {
   return <>
     <h3>{w.name}</h3>
     <div className="muted small" style={{ marginBottom: 12 }}>{[fmtDate(w.d, true), ...durPart(w.end - w.start), fmtVol(w.vol, st.unit), ...(w.bw ? [fmtNum(w.bw) + ' ' + st.unit] : [])].join(' · ')}</div>
+    {w.wod && (
+      <div className="card" style={{ marginBottom: 14, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+        <div className="row between" style={{ marginBottom: 6 }}>
+          <span className="tag acc" style={{ fontWeight: 700 }}>🔥 WOD · {w.wod.type || 'CrossFit'}</span>
+          {w.wod.cap && <span className="small muted" style={{ fontWeight: 500 }}>⏱️ {w.wod.cap}</span>}
+        </div>
+        {w.wod.desc && <div style={{ fontSize: 14, marginBottom: 8, whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>{w.wod.desc}</div>}
+        {w.wod.score && <div style={{ fontSize: 15, color: 'var(--acc)', fontWeight: 600, marginBottom: 4 }}>🎯 {t('Score:')} {w.wod.score}</div>}
+        {w.wod.notes && <div className="small muted" style={{ marginTop: 6, fontStyle: 'italic', borderTop: '1px solid var(--border)', paddingTop: 6 }}>📝 {w.wod.notes}</div>}
+      </div>
+    )}
     {w.entries.map((e, i) => {
       const ex = EXIDX[e.id]
       return <div key={i} className="row" style={{ marginBottom: 12, alignItems: 'flex-start' }}>
@@ -759,10 +770,489 @@ function WorkoutDetail({ w, close }) {
           <div className="ss">{e.sets.filter(s => s.done).map(s => setLabel(e.id, s, e.target)).join('  ·  ') || t('no sets')}</div></div>
       </div>
     })}
-    <Button variant="danger" onClick={() => confirmSheet({ title: t('Delete workout?'), message: t('This removes it from your history for good.'), confirmText: t('Delete'), danger: true, onConfirm: () => { update(s => { s.workouts = s.workouts.filter(x => x.id !== w.id) }); close(); toast(t('Workout deleted')) } })}>{t('Delete workout')}</Button>
+    <div className="row" style={{ gap: 8, marginTop: 14 }}>
+      <Button variant="primary" icon="pencil" onClick={() => { close(); editWorkoutSheet(w) }}>{t('Edit workout')}</Button>
+      <Button variant="danger" icon="trash" onClick={() => confirmSheet({ title: t('Delete workout?'), message: t('This removes it from your history for good.'), confirmText: t('Delete'), danger: true, onConfirm: () => { update(s => { s.workouts = s.workouts.filter(x => x.id !== w.id) }); close(); toast(t('Workout deleted')) } })}>{t('Delete')}</Button>
+    </div>
   </>
 }
 export const workoutDetailSheet = w => ui().openSheet(close => <WorkoutDetail w={w} close={close} />)
+
+/* ============================ edit workout ============================ */
+function EditWorkout({ w: origW, close }) {
+  const st = useStore(s => s.S)
+  const [name, setName] = useState(origW.name || '')
+  const [d, setD] = useState(origW.d || '')
+  const [entries, setEntries] = useState(() => JSON.parse(JSON.stringify(origW.entries || [])))
+  const [wod, setWod] = useState(() => origW.wod ? JSON.parse(JSON.stringify(origW.wod)) : { type: 'AMRAP', cap: '', desc: '', score: '', notes: '' })
+  const [wodOpen, setWodOpen] = useState(() => !!(origW.wod && (origW.wod.desc || origW.wod.score || origW.wod.notes || origW.wod.cap)))
+
+  const moveEntry = (fromIdx, toIdx) => {
+    if (toIdx < 0 || toIdx >= entries.length) return
+    setEntries(prev => {
+      const next = [...prev]
+      const [item] = next.splice(fromIdx, 1)
+      next.splice(toIdx, 0, item)
+      return next
+    })
+  }
+
+  const moveSet = (entryIdx, fromIdx, toIdx) => {
+    setEntries(prev => {
+      const next = JSON.parse(JSON.stringify(prev))
+      const sets = next[entryIdx].sets
+      if (toIdx < 0 || toIdx >= sets.length) return prev
+      const [item] = sets.splice(fromIdx, 1)
+      sets.splice(toIdx, 0, item)
+      return next
+    })
+  }
+
+  const setSetField = (entryIdx, setIdx, field, val) => {
+    setEntries(prev => {
+      const next = JSON.parse(JSON.stringify(prev))
+      next[entryIdx].sets[setIdx][field] = val
+      return next
+    })
+  }
+
+  const addSetToEntry = entryIdx => {
+    setEntries(prev => {
+      const next = JSON.parse(JSON.stringify(prev))
+      const last = next[entryIdx].sets[next[entryIdx].sets.length - 1]
+      next[entryIdx].sets.push(last ? { ...last, done: true } : { w: 0, r: 10, done: true })
+      return next
+    })
+  }
+
+  const removeSetFromEntry = (entryIdx, setIdx) => {
+    setEntries(prev => {
+      const next = JSON.parse(JSON.stringify(prev))
+      next[entryIdx].sets.splice(setIdx, 1)
+      return next
+    })
+  }
+
+  const removeEntry = entryIdx => {
+    setEntries(prev => prev.filter((_, i) => i !== entryIdx))
+  }
+
+  const save = () => {
+    const hasWod = !!(wod && (wod.desc || wod.score || wod.notes || wod.cap))
+    const updatedW = {
+      ...origW,
+      name: name.trim() || t('Workout'),
+      d: d.trim() || origW.d,
+      entries: entries.filter(e => e.sets && e.sets.length > 0),
+      wod: hasWod ? wod : null
+    }
+    updatedW.vol = workoutVolume(updatedW)
+
+    update(s => {
+      const idx = s.workouts.findIndex(x => x.id === origW.id)
+      if (idx !== -1) {
+        s.workouts[idx] = updatedW
+        updatedW.entries.forEach(e => {
+          const mx = Math.max(0, ...e.sets.filter(x => x.done).map(x => x.w || 0), e.topW || 0)
+          if (mx > 0) {
+            const cur = s.exWeights[e.id]
+            if (!cur || mx > cur.w) s.exWeights[e.id] = { w: mx, d: updatedW.d }
+          }
+        })
+      }
+    })
+    close()
+    toast(t('Workout updated'))
+    workoutDetailSheet(updatedW)
+  }
+
+  const types = ['AMRAP', 'For Time', 'EMOM', 'Tabata', 'Metcon', 'Chipper']
+
+  return <>
+    <h3>{t('Edit workout')}</h3>
+    <div style={{ marginBottom: 12 }}>
+      <div className="muted small" style={{ marginBottom: 4 }}>{t('Workout name')}</div>
+      <input className="input" value={name} onChange={e => setName(e.target.value)} />
+    </div>
+    <div style={{ marginBottom: 14 }}>
+      <div className="muted small" style={{ marginBottom: 4 }}>{t('Date')} (YYYY-MM-DD)</div>
+      <input type="date" className="input" value={d} onChange={e => setD(e.target.value)} />
+    </div>
+
+    {/* WOD Section */}
+    <div className="card" style={{ marginBottom: 14, border: wodOpen ? '1px solid var(--acc)' : '1px solid var(--border)' }}>
+      <div className="row between" style={{ cursor: 'pointer' }} onClick={() => setWodOpen(o => !o)}>
+        <div className="row" style={{ gap: 8 }}>
+          <span style={{ fontSize: 18 }}>🔥</span>
+          <div style={{ fontWeight: 600 }}>{t('CrossFit WOD / Metcon & Notes')}</div>
+        </div>
+        <Icon name={wodOpen ? 'chevronUp' : 'chevronDown'} className="chev" />
+      </div>
+      {wodOpen && (
+        <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+          <div className="chips" style={{ marginBottom: 10 }}>
+            {types.map(tp => (
+              <button key={tp} type="button" className={'chip nocap' + ((wod.type || 'AMRAP') === tp ? ' on' : '')} onClick={() => setWod({ ...wod, type: tp })}>
+                {tp}
+              </button>
+            ))}
+          </div>
+          <div className="row" style={{ gap: 8, marginBottom: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div className="muted small" style={{ marginBottom: 4 }}>{t('Time / Cap')}</div>
+              <input className="input" placeholder="ej. 16' / Cap 20'" value={wod.cap || ''} onChange={e => setWod({ ...wod, cap: e.target.value })} />
+            </div>
+            <div style={{ flex: 1.5 }}>
+              <div className="muted small" style={{ marginBottom: 4 }}>{t('Score / Result')}</div>
+              <input className="input" placeholder="ej. 1 ronda + 40 reps" value={wod.score || ''} onChange={e => setWod({ ...wod, score: e.target.value })} />
+            </div>
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <div className="muted small" style={{ marginBottom: 4 }}>{t('WOD Description')}</div>
+            <textarea className="input" rows={2} style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 14, minHeight: 48 }} value={wod.desc || ''} onChange={e => setWod({ ...wod, desc: e.target.value })} />
+          </div>
+          <div>
+            <div className="muted small" style={{ marginBottom: 4 }}>{t('Notes / Sensations')}</div>
+            <input className="input" placeholder="ej. Pesos KB 16kg" value={wod.notes || ''} onChange={e => setWod({ ...wod, notes: e.target.value })} />
+          </div>
+        </div>
+      )}
+    </div>
+
+    {/* Exercises & Sets */}
+    <h4 className="sec">{t('Exercises')}</h4>
+    {entries.map((e, entryIdx) => {
+      const ex = EXIDX[e.id]
+      return (
+        <div key={entryIdx} className="card" style={{ marginBottom: 12 }}>
+          <div className="row between" style={{ marginBottom: 8 }}>
+            <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+              <div className="row" style={{ gap: 2 }}>
+                <button
+                  className="iconbtn"
+                  style={{ width: 26, height: 26, opacity: entryIdx === 0 ? 0.3 : 1 }}
+                  disabled={entryIdx === 0}
+                  onClick={() => moveEntry(entryIdx, entryIdx - 1)}
+                  aria-label="Move exercise up"
+                >
+                  <Icon name="chevronUp" />
+                </button>
+                <button
+                  className="iconbtn"
+                  style={{ width: 26, height: 26, opacity: entryIdx === entries.length - 1 ? 0.3 : 1 }}
+                  disabled={entryIdx === entries.length - 1}
+                  onClick={() => moveEntry(entryIdx, entryIdx + 1)}
+                  aria-label="Move exercise down"
+                >
+                  <Icon name="chevronDown" />
+                </button>
+              </div>
+              <div style={{ fontWeight: 600, textTransform: 'capitalize' }}>{ex ? ex.n : (e.n || e.id)}</div>
+            </div>
+            <button className="iconbtn" style={{ color: 'var(--red)', width: 28, height: 28 }} onClick={() => removeEntry(entryIdx)} aria-label="Remove exercise">
+              <Icon name="trash" />
+            </button>
+          </div>
+          {e.sets.map((s, setIdx) => (
+            <div key={setIdx} className="row" style={{ gap: 6, marginBottom: 6, alignItems: 'center' }}>
+              <div className="row" style={{ gap: 1 }}>
+                <button
+                  className="iconbtn"
+                  style={{ width: 20, height: 20, fontSize: 12, opacity: setIdx === 0 ? 0.25 : 1 }}
+                  disabled={setIdx === 0}
+                  onClick={() => moveSet(entryIdx, setIdx, setIdx - 1)}
+                  aria-label="Move set up"
+                >
+                  <Icon name="chevronUp" />
+                </button>
+                <button
+                  className="iconbtn"
+                  style={{ width: 20, height: 20, fontSize: 12, opacity: setIdx === e.sets.length - 1 ? 0.25 : 1 }}
+                  disabled={setIdx === e.sets.length - 1}
+                  onClick={() => moveSet(entryIdx, setIdx, setIdx + 1)}
+                  aria-label="Move set down"
+                >
+                  <Icon name="chevronDown" />
+                </button>
+              </div>
+              <span className="small muted" style={{ width: 14, textAlign: 'center' }}>{setIdx + 1}</span>
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input type="number" step="0.5" className="input" style={{ padding: '6px 8px' }} value={s.w ?? 0} onChange={ev => setSetField(entryIdx, setIdx, 'w', +ev.target.value || 0)} />
+                <span className="small muted">{st.unit}</span>
+              </div>
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input type="number" step="1" className="input" style={{ padding: '6px 8px' }} value={s.r ?? 0} onChange={ev => setSetField(entryIdx, setIdx, 'r', +ev.target.value || 0)} />
+                <span className="small muted">reps</span>
+              </div>
+              <button className="iconbtn" style={{ width: 24, height: 24 }} onClick={() => removeSetFromEntry(entryIdx, setIdx)}>
+                <Icon name="xmark" />
+              </button>
+            </div>
+          ))}
+          <Button size="sm" variant="tinted" icon="plus" style={{ marginTop: 4 }} onClick={() => addSetToEntry(entryIdx)}>{t('Add set')}</Button>
+        </div>
+      )
+    })}
+
+    <Button icon="plus" onClick={() => exercisePicker(ex => setEntries(prev => [...prev, { id: ex.id, sets: [{ w: 0, r: 10, done: true }] }]))}>{t('Add exercise')}</Button>
+    <div style={{ height: 16 }} />
+    <Button variant="primary" onClick={save}>{t('Save changes')}</Button>
+  </>
+}
+export const editWorkoutSheet = w => ui().openSheet(close => <EditWorkout w={w} close={close} />)
+
+/* ============================ log past workout (retrospective entry) ============================ */
+function LogPastWorkout({ initialDate, initialRoutineId, close }) {
+  const st = useStore(s => s.S)
+  const [name, setName] = useState(() => {
+    if (initialRoutineId) {
+      const r = st.routines.find(x => x.id === initialRoutineId)
+      if (r) return r.name
+    }
+    return ''
+  })
+  const [d, setD] = useState(() => initialDate || todayISO())
+  const [entries, setEntries] = useState(() => {
+    if (initialRoutineId) {
+      const r = st.routines.find(x => x.id === initialRoutineId)
+      if (r && r.ex) {
+        return r.ex.map(item => ({
+          id: item.id,
+          sets: Array.from({ length: item.sets || 3 }, () => ({
+            w: (st.exWeights[item.id] || {}).w || item.weight || 0,
+            r: item.reps || 10,
+            done: true
+          }))
+        }))
+      }
+    }
+    return []
+  })
+  const [wod, setWod] = useState({ type: 'AMRAP', cap: '', desc: '', score: '', notes: '' })
+  const [wodOpen, setWodOpen] = useState(true)
+
+  const moveEntry = (fromIdx, toIdx) => {
+    if (toIdx < 0 || toIdx >= entries.length) return
+    setEntries(prev => {
+      const next = [...prev]
+      const [item] = next.splice(fromIdx, 1)
+      next.splice(toIdx, 0, item)
+      return next
+    })
+  }
+
+  const moveSet = (entryIdx, fromIdx, toIdx) => {
+    setEntries(prev => {
+      const next = JSON.parse(JSON.stringify(prev))
+      const sets = next[entryIdx].sets
+      if (toIdx < 0 || toIdx >= sets.length) return prev
+      const [item] = sets.splice(fromIdx, 1)
+      sets.splice(toIdx, 0, item)
+      return next
+    })
+  }
+
+  const setSetField = (entryIdx, setIdx, field, val) => {
+    setEntries(prev => {
+      const next = JSON.parse(JSON.stringify(prev))
+      next[entryIdx].sets[setIdx][field] = val
+      return next
+    })
+  }
+
+  const addSetToEntry = entryIdx => {
+    setEntries(prev => {
+      const next = JSON.parse(JSON.stringify(prev))
+      const last = next[entryIdx].sets[next[entryIdx].sets.length - 1]
+      next[entryIdx].sets.push(last ? { ...last, done: true } : { w: 0, r: 10, done: true })
+      return next
+    })
+  }
+
+  const removeSetFromEntry = (entryIdx, setIdx) => {
+    setEntries(prev => {
+      const next = JSON.parse(JSON.stringify(prev))
+      next[entryIdx].sets.splice(setIdx, 1)
+      return next
+    })
+  }
+
+  const removeEntry = entryIdx => {
+    setEntries(prev => prev.filter((_, i) => i !== entryIdx))
+  }
+
+  const save = () => {
+    const hasWod = !!(wod && (wod.desc || wod.score || wod.notes || wod.cap))
+    if (!entries.length && !hasWod) {
+      toast(t('Add at least one exercise or WOD details'))
+      return
+    }
+
+    const startTs = new Date(d + 'T12:00:00').getTime() || Date.now()
+    const finalName = name.trim() || (hasWod ? (wod.type || 'CrossFit WOD') : (entries.length ? EXIDX[entries[0].id]?.n || t('Workout') : t('Workout')))
+
+    const newWorkout = {
+      id: uid(),
+      d: d.trim() || todayISO(),
+      name: finalName,
+      start: startTs,
+      end: startTs + 3600000,
+      entries: entries.filter(e => e.sets && e.sets.length > 0),
+      wod: hasWod ? wod : null
+    }
+    newWorkout.vol = workoutVolume(newWorkout)
+
+    update(s => {
+      s.workouts.push(newWorkout)
+      s.workouts.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : a.start - b.start))
+      newWorkout.entries.forEach(e => {
+        const mx = Math.max(0, ...e.sets.filter(x => x.done).map(x => x.w || 0))
+        if (mx > 0) {
+          const cur = s.exWeights[e.id]
+          if (!cur || mx > cur.w) s.exWeights[e.id] = { w: mx, d: newWorkout.d }
+        }
+      })
+    })
+
+    close()
+    toast(t('Workout logged to history'))
+    workoutDetailSheet(newWorkout)
+  }
+
+  const types = ['AMRAP', 'For Time', 'EMOM', 'Tabata', 'Metcon', 'Chipper']
+
+  return <>
+    <h3>{t('Log past workout')}</h3>
+    <div style={{ marginBottom: 12 }}>
+      <div className="muted small" style={{ marginBottom: 4 }}>{t('Workout name (optional)')}</div>
+      <input className="input" placeholder="ej. WOD & Front Squats" value={name} onChange={e => setName(e.target.value)} />
+    </div>
+    <div style={{ marginBottom: 14 }}>
+      <div className="muted small" style={{ marginBottom: 4 }}>{t('Date')} (YYYY-MM-DD)</div>
+      <input type="date" className="input" value={d} onChange={e => setD(e.target.value)} />
+    </div>
+
+    {/* CrossFit WOD Section */}
+    <div className="card" style={{ marginBottom: 14, border: '1px solid var(--acc)' }}>
+      <div className="row between" style={{ cursor: 'pointer' }} onClick={() => setWodOpen(o => !o)}>
+        <div className="row" style={{ gap: 8 }}>
+          <span style={{ fontSize: 18 }}>🔥</span>
+          <div style={{ fontWeight: 600 }}>{t('CrossFit WOD / Metcon & Notes')}</div>
+        </div>
+        <Icon name={wodOpen ? 'chevronUp' : 'chevronDown'} className="chev" />
+      </div>
+      {wodOpen && (
+        <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+          <div className="chips" style={{ marginBottom: 10 }}>
+            {types.map(tp => (
+              <button key={tp} type="button" className={'chip nocap' + ((wod.type || 'AMRAP') === tp ? ' on' : '')} onClick={() => setWod({ ...wod, type: tp })}>
+                {tp}
+              </button>
+            ))}
+          </div>
+          <div className="row" style={{ gap: 8, marginBottom: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div className="muted small" style={{ marginBottom: 4 }}>{t('Time / Cap')}</div>
+              <input className="input" placeholder="ej. 16' / Cap 20'" value={wod.cap || ''} onChange={e => setWod({ ...wod, cap: e.target.value })} />
+            </div>
+            <div style={{ flex: 1.5 }}>
+              <div className="muted small" style={{ marginBottom: 4 }}>{t('Score / Result')}</div>
+              <input className="input" placeholder="ej. 1 ronda + 40 reps" value={wod.score || ''} onChange={e => setWod({ ...wod, score: e.target.value })} />
+            </div>
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <div className="muted small" style={{ marginBottom: 4 }}>{t('WOD Description')}</div>
+            <textarea className="input" rows={2} style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 14, minHeight: 48 }} placeholder="ej. 200m KB carry, 80 KB tater, 60 knees to chest, 40 KB push press, 200m run" value={wod.desc || ''} onChange={e => setWod({ ...wod, desc: e.target.value })} />
+          </div>
+          <div>
+            <div className="muted small" style={{ marginBottom: 4 }}>{t('Notes / Sensations')}</div>
+            <input className="input" placeholder="ej. Pesos KB 16kg, buen ritmo" value={wod.notes || ''} onChange={e => setWod({ ...wod, notes: e.target.value })} />
+          </div>
+        </div>
+      )}
+    </div>
+
+    {/* Strength / Skill Exercises & Sets */}
+    <h4 className="sec">{t('Strength / Skill Exercises')}</h4>
+    {entries.map((e, entryIdx) => {
+      const ex = EXIDX[e.id]
+      return (
+        <div key={entryIdx} className="card" style={{ marginBottom: 12 }}>
+          <div className="row between" style={{ marginBottom: 8 }}>
+            <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+              <div className="row" style={{ gap: 2 }}>
+                <button
+                  className="iconbtn"
+                  style={{ width: 26, height: 26, opacity: entryIdx === 0 ? 0.3 : 1 }}
+                  disabled={entryIdx === 0}
+                  onClick={() => moveEntry(entryIdx, entryIdx - 1)}
+                  aria-label="Move exercise up"
+                >
+                  <Icon name="chevronUp" />
+                </button>
+                <button
+                  className="iconbtn"
+                  style={{ width: 26, height: 26, opacity: entryIdx === entries.length - 1 ? 0.3 : 1 }}
+                  disabled={entryIdx === entries.length - 1}
+                  onClick={() => moveEntry(entryIdx, entryIdx + 1)}
+                  aria-label="Move exercise down"
+                >
+                  <Icon name="chevronDown" />
+                </button>
+              </div>
+              <div style={{ fontWeight: 600, textTransform: 'capitalize' }}>{ex ? ex.n : (e.n || e.id)}</div>
+            </div>
+            <button className="iconbtn" style={{ color: 'var(--red)', width: 28, height: 28 }} onClick={() => removeEntry(entryIdx)} aria-label="Remove exercise">
+              <Icon name="trash" />
+            </button>
+          </div>
+          {e.sets.map((s, setIdx) => (
+            <div key={setIdx} className="row" style={{ gap: 6, marginBottom: 6, alignItems: 'center' }}>
+              <div className="row" style={{ gap: 1 }}>
+                <button
+                  className="iconbtn"
+                  style={{ width: 20, height: 20, fontSize: 12, opacity: setIdx === 0 ? 0.25 : 1 }}
+                  disabled={setIdx === 0}
+                  onClick={() => moveSet(entryIdx, setIdx, setIdx - 1)}
+                  aria-label="Move set up"
+                >
+                  <Icon name="chevronUp" />
+                </button>
+                <button
+                  className="iconbtn"
+                  style={{ width: 20, height: 20, fontSize: 12, opacity: setIdx === e.sets.length - 1 ? 0.25 : 1 }}
+                  disabled={setIdx === e.sets.length - 1}
+                  onClick={() => moveSet(entryIdx, setIdx, setIdx + 1)}
+                  aria-label="Move set down"
+                >
+                  <Icon name="chevronDown" />
+                </button>
+              </div>
+              <span className="small muted" style={{ width: 14, textAlign: 'center' }}>{setIdx + 1}</span>
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input type="number" step="0.5" className="input" style={{ padding: '6px 8px' }} value={s.w ?? 0} onChange={ev => setSetField(entryIdx, setIdx, 'w', +ev.target.value || 0)} />
+                <span className="small muted">{st.unit}</span>
+              </div>
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input type="number" step="1" className="input" style={{ padding: '6px 8px' }} value={s.r ?? 0} onChange={ev => setSetField(entryIdx, setIdx, 'r', +ev.target.value || 0)} />
+                <span className="small muted">reps</span>
+              </div>
+              <button className="iconbtn" style={{ width: 24, height: 24 }} onClick={() => removeSetFromEntry(entryIdx, setIdx)}>
+                <Icon name="xmark" />
+              </button>
+            </div>
+          ))}
+          <Button size="sm" variant="tinted" icon="plus" style={{ marginTop: 4 }} onClick={() => addSetToEntry(entryIdx)}>{t('Add set')}</Button>
+        </div>
+      )
+    })}
+
+    <Button icon="plus" onClick={() => exercisePicker(ex => setEntries(prev => [...prev, { id: ex.id, sets: [{ w: 0, r: 10, done: true }] }]))}>{t('Add strength exercise')}</Button>
+    <div style={{ height: 16 }} />
+    <Button variant="primary" icon="check" onClick={save}>{t('Save workout')}</Button>
+  </>
+}
+export const logPastWorkoutSheet = opts => ui().openSheet(close => <LogPastWorkout {...(opts || {})} close={close} />)
 
 /* ============================ calendar ============================ */
 function Calendar({ start, close }) {
@@ -810,10 +1300,12 @@ export const calendarSheet = start => ui().openSheet(close => <Calendar start={s
 export function WorkoutRow({ w, onClick }) {
   const st = useStore(s => s.S)
   const glyph = glyphOf((st.routines.find(r => r.id === w.routineId) || {}).emoji)
+  const setsCount = setsDone(w)
   return <div className="item" onClick={onClick}>
-    <span className="lrow-i" style={{ width: 34, height: 34, borderRadius: 8, fontSize: 19 }}><Icon name={glyph} /></span>
+    <span className="lrow-i" style={{ width: 34, height: 34, borderRadius: 8, fontSize: 19 }}><Icon name={w.wod && !glyph ? 'flame' : glyph} /></span>
     <div className="grow"><div className="tt">{w.name}</div>
-      <div className="ss">{[fmtDate(w.d, true), ...durPart(w.end - w.start), t('{0} sets', setsDone(w)), fmtVol(w.vol, st.unit)].join(' · ')}</div></div>
+      <div className="ss">{[fmtDate(w.d, true), ...durPart(w.end - w.start), setsCount > 0 ? t('{0} sets', setsCount) : null, w.wod ? (w.wod.type || 'WOD') : null, fmtVol(w.vol, st.unit)].filter(Boolean).join(' · ')}</div></div>
+    {w.wod && <span className="tag acc" style={{ fontSize: 11, padding: '2px 6px' }}>🔥 {w.wod.type || 'WOD'}</span>}
     {w.prs && w.prs.length > 0 && <span className="pr"><Icon name="trophy" />{w.prs.length} PR</span>}
     <Icon name="chevronRight" className="chev" />
   </div>
@@ -913,6 +1405,17 @@ function FinishSummary({ w, prs, e1prs = [], close }) {
       <div className="tile"><div className="l">{t('Sets')}</div><div className="v" style={{ fontSize: '1.1rem' }}>{setsDone(w)}</div></div>
       <div className="tile"><div className="l">{t('PRs')}</div><div className="v" style={{ fontSize: 20 }}>{prs.length || '—'}</div></div>
     </div>
+    {w.wod && (
+      <div className="card" style={{ textAlign: 'left', marginTop: 10, marginBottom: 12, background: 'var(--surface-2)', border: '1px solid var(--acc)' }}>
+        <div className="row between" style={{ marginBottom: 4 }}>
+          <span className="tag acc" style={{ fontWeight: 700 }}>🔥 WOD · {w.wod.type || 'CrossFit'}</span>
+          {w.wod.cap && <span className="small muted">⏱️ {w.wod.cap}</span>}
+        </div>
+        {w.wod.desc && <div style={{ fontSize: 13, marginBottom: 6, whiteSpace: 'pre-wrap' }}>{w.wod.desc}</div>}
+        {w.wod.score && <div style={{ fontSize: 15, color: 'var(--acc)', fontWeight: 600 }}>🎯 {t('Score:')} {w.wod.score}</div>}
+        {w.wod.notes && <div className="small muted" style={{ marginTop: 4, fontStyle: 'italic' }}>📝 {w.wod.notes}</div>}
+      </div>
+    )}
     {(prs.length > 0 || e1prs.length > 0) && <div style={{ textAlign: 'left', marginBottom: 12 }}>
       {prs.map(id => <div key={id} className="small accent capitalize row" style={{ gap: 5 }}><Icon name="trophy" style={{ fontSize: 13 }} />{t('New PR:')} {(EXIDX[id] || {}).n || id}</div>)}
       {e1prs.map(p => <div key={p.id} className="small accent capitalize row" style={{ gap: 5 }}><Icon name="chartLine" style={{ fontSize: 13 }} />{t('Best estimated 1RM:')} {(EXIDX[p.id] || {}).n || p.id} · {fmtNum(p.est)} {st.unit}</div>)}
@@ -928,8 +1431,9 @@ export function finishWorkout() {
   if (!A) return
   const done = setsDoneActive(A)
   const total = A.entries.reduce((n, e) => n + e.sets.length, 0)
-  if (!done) { confirmSheet({ title: t('Nothing logged yet'), message: t('You haven’t checked off any sets. Finish the workout anyway?'), confirmText: t('Finish anyway'), onConfirm: doFinishWorkout }); return }
-  if (done < total) { confirmSheet({ title: t('Finish early?'), message: t(total - done === 1 ? '{0} set still unchecked. Finish the workout now?' : '{0} sets still unchecked. Finish the workout now?', total - done), confirmText: t('Finish workout'), onConfirm: doFinishWorkout }); return }
+  const hasWod = !!(A.wod && (A.wod.desc || A.wod.score || A.wod.notes || A.wod.cap))
+  if (!done && !hasWod) { confirmSheet({ title: t('Nothing logged yet'), message: t('You haven’t checked off any sets. Finish the workout anyway?'), confirmText: t('Finish anyway'), onConfirm: doFinishWorkout }); return }
+  if (total > 0 && done < total) { confirmSheet({ title: t('Finish early?'), message: t(total - done === 1 ? '{0} set still unchecked. Finish the workout now?' : '{0} sets still unchecked. Finish the workout now?', total - done), confirmText: t('Finish workout'), onConfirm: doFinishWorkout }); return }
   doFinishWorkout()
 }
 function doFinishWorkout() {
@@ -946,12 +1450,14 @@ function doFinishWorkout() {
     const rec = is1RMRecord(st, e.id, e)
     if (rec && !prs.includes(e.id)) e1prs.push({ id: e.id, ...rec })
   })
+  const hasWod = !!(A.wod && (A.wod.desc || A.wod.score || A.wod.notes || A.wod.cap))
   const w = {
     id: A.id, d: A.d, start: A.start, end: Date.now(), routineId: A.routineId, name: A.name, bw: A.bw,
     // `target` (what the session prescribed) is kept alongside the sets: without it a
     // finished workout cannot say whether it hit its reps, and a timed session reads back
     // as "0 reps". It is what the progression engine works from.
     entries: A.entries.map(e => ({ id: e.id, sets: e.sets, topW: e.topW || null, target: e.target || null })).filter(e => e.sets.some(s => s.done)),
+    wod: hasWod ? A.wod : null,
     prs
   }
   w.vol = workoutVolume(w)

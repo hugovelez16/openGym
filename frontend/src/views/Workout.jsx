@@ -9,7 +9,7 @@ import { beep, vibrate } from '../lib/sound.js'
 import { t } from '../lib/i18n.js'
 import { api } from '../lib/api.js'
 import Media from '../components/Media.jsx'
-import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, topWeightSheet, finishWorkout, workoutCompleteSheet, confirmSheet } from '../sheets.jsx'
+import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, topWeightSheet, finishWorkout, workoutCompleteSheet, confirmSheet, logPastWorkoutSheet } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
 import { Button, Check, NumberField } from '../components/ui.jsx'
 import { nextPrescription, applyPrescription } from '../lib/progression.js'
@@ -39,6 +39,8 @@ function StartChooser() {
         <span className="tag acc">{t('Start')}</span></div>)}</div></>}
     <div style={{ height: 14 }} />
     <Button icon="shuffle" onClick={() => startFlow(null)}>{t('Freestyle workout (pick as you go)')}</Button>
+    <div style={{ height: 8 }} />
+    <Button variant="tinted" icon="calendar" onClick={() => logPastWorkoutSheet({})}>{t('Log past workout (quick entry)')}</Button>
     {!S.routines.length && <><div style={{ height: 10 }} /><Button variant="primary" onClick={() => nav('/plan')}>{t('Build a plan first')}</Button></>}
   </div>
 }
@@ -54,7 +56,7 @@ function Elapsed({ start }) {
 }
 
 /* ---------- one exercise block (reps: weight×reps · time: a held duration · cardio: duration+speed) ---------- */
-function ExerciseBlock({ entryIdx, compact, onToggle, onField, onAddSet, onRemoveSet, onStartTimed }) {
+function ExerciseBlock({ entryIdx, compact, onToggle, onField, onAddSet, onRemoveSet, onMoveSet, onStartTimed, onMoveExUp, onMoveExDown, canMoveUp, canMoveDown }) {
   const S = useStore(s => s.S)
   const working = useUI(s => s.work)
   const entry = S.active.entries[entryIdx]
@@ -111,7 +113,31 @@ function ExerciseBlock({ entryIdx, compact, onToggle, onField, onAddSet, onRemov
   return <>
     <Media ex={ex} key={entry.id} compact={compact} minimizable />
     <div className="row between" style={{ marginBottom: 6 }}>
-      <div style={{ fontSize: compact ? 17 : 20, fontWeight: 600, letterSpacing: '-.02em', textTransform: 'capitalize', lineHeight: 1.2 }}>{ex.n}</div>
+      <div className="row" style={{ gap: 6, alignItems: 'center' }}>
+        {(canMoveUp || canMoveDown) && (
+          <div className="row" style={{ gap: 2 }}>
+            <button
+              className="iconbtn"
+              style={{ width: 26, height: 26, opacity: canMoveUp ? 1 : 0.25 }}
+              disabled={!canMoveUp}
+              onClick={onMoveExUp}
+              aria-label={t('Move up')}
+            >
+              <Icon name="chevronUp" />
+            </button>
+            <button
+              className="iconbtn"
+              style={{ width: 26, height: 26, opacity: canMoveDown ? 1 : 0.25 }}
+              disabled={!canMoveDown}
+              onClick={onMoveExDown}
+              aria-label={t('Move down')}
+            >
+              <Icon name="chevronDown" />
+            </button>
+          </div>
+        )}
+        <div style={{ fontSize: compact ? 17 : 20, fontWeight: 600, letterSpacing: '-.02em', textTransform: 'capitalize', lineHeight: 1.2 }}>{ex.n}</div>
+      </div>
       <button className="iconbtn" aria-label={t('Details')} onClick={() => exerciseDetailSheet(ex)}><Icon name="info" /></button>
     </div>
     <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
@@ -132,7 +158,33 @@ function ExerciseBlock({ entryIdx, compact, onToggle, onField, onAddSet, onRemov
       {/* the header carries the same eff3 sizing as the rows, or the labels drift off their columns */}
       <div className={'sethead' + (col3 ? ' eff3' : '')}><span className="n-sp" /><span className="w-sp">{col1.hd}</span>{col2 && <span className="r-sp">{col2.hd}</span>}{col3 && <span className="eff-sp">{col3.hd}</span>}{timed && <span className="ck-sp" />}<span className="ck-sp" /></div>
       {entry.sets.map((s, i) => <div key={i} className={'setrow' + (s.done ? ' done' : '') + (col3 ? ' eff3' : '')}>
-        <div className="n">{i + 1}</div>
+        <div className="n" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1 }}>
+          {entry.sets.length > 1 ? (
+            <div className="row" style={{ gap: 0, justifyContent: 'center' }}>
+              <button
+                className="iconbtn"
+                style={{ width: 16, height: 16, fontSize: 10, opacity: i === 0 ? 0.2 : 0.8 }}
+                disabled={i === 0}
+                onClick={() => onMoveSet && onMoveSet(i, i - 1)}
+                aria-label="Move set up"
+              >
+                <Icon name="chevronUp" />
+              </button>
+              <span style={{ fontSize: 13, fontWeight: 600, minWidth: 10, textAlign: 'center' }}>{i + 1}</span>
+              <button
+                className="iconbtn"
+                style={{ width: 16, height: 16, fontSize: 10, opacity: i === entry.sets.length - 1 ? 0.2 : 0.8 }}
+                disabled={i === entry.sets.length - 1}
+                onClick={() => onMoveSet && onMoveSet(i, i + 1)}
+                aria-label="Move set down"
+              >
+                <Icon name="chevronDown" />
+              </button>
+            </div>
+          ) : (
+            <span>{i + 1}</span>
+          )}
+        </div>
         {cell(s, i, col1, 'w')}
         {col2 && cell(s, i, col2, 'r')}
         {col3 && cell(s, i, col3, 'eff')}
@@ -182,6 +234,19 @@ function ActiveWorkout() {
     else e.sets.push({ w: l ? l.w : 0, r: l ? l.r : e.target.reps, done: false })
   })
   const removeSet = idx => mutEntry(idx, e => { if (e.sets.length > 1) e.sets.pop() })
+
+  const moveSet = (idx, fromIdx, toIdx) => mutEntry(idx, e => {
+    if (toIdx < 0 || toIdx >= e.sets.length) return
+    const [item] = e.sets.splice(fromIdx, 1)
+    e.sets.splice(toIdx, 0, item)
+  })
+
+  const moveEx = (fromIdx, toIdx) => update(s => {
+    if (toIdx < 0 || toIdx >= s.active.entries.length) return
+    const [item] = s.active.entries.splice(fromIdx, 1)
+    s.active.entries.splice(toIdx, 0, item)
+    s.active.cur = toIdx
+  })
 
   // A timed set is held, not typed. The work timer records what was actually held — an early
   // finish logs 0:38 of a 0:45 target rather than crediting the full prescription — and then
@@ -266,12 +331,35 @@ function ActiveWorkout() {
           <div className="ss-hd"><Icon name="link" />{t('Superset · do these back-to-back, rest after both')}</div>
           {unit.map((idx, k) => <div key={idx} className="ss-ex">
             {k > 0 && <div className="ss-amp">+</div>}
-            <ExerciseBlock entryIdx={idx} compact
-              onToggle={i => toggle(idx, i)} onField={(i, f, v) => setField(idx, i, f, v)} onAddSet={() => addSet(idx)} onRemoveSet={() => removeSet(idx)} onStartTimed={i => startTimed(idx, i)} />
+            <ExerciseBlock
+              entryIdx={idx} compact
+              onToggle={i => toggle(idx, i)}
+              onField={(i, f, v) => setField(idx, i, f, v)}
+              onAddSet={() => addSet(idx)}
+              onRemoveSet={() => removeSet(idx)}
+              onMoveSet={(f, t) => moveSet(idx, f, t)}
+              onStartTimed={i => startTimed(idx, i)}
+              onMoveExUp={() => moveEx(idx, idx - 1)}
+              onMoveExDown={() => moveEx(idx, idx + 1)}
+              canMoveUp={idx > 0}
+              canMoveDown={idx < A.entries.length - 1}
+            />
           </div>)}
         </div>
       ) : (
-        <ExerciseBlock entryIdx={cur} onToggle={i => toggle(cur, i)} onField={(i, f, v) => setField(cur, i, f, v)} onAddSet={() => addSet(cur)} onRemoveSet={() => removeSet(cur)} onStartTimed={i => startTimed(cur, i)} />
+        <ExerciseBlock
+          entryIdx={cur}
+          onToggle={i => toggle(cur, i)}
+          onField={(i, f, v) => setField(cur, i, f, v)}
+          onAddSet={() => addSet(cur)}
+          onRemoveSet={() => removeSet(cur)}
+          onMoveSet={(f, t) => moveSet(cur, f, t)}
+          onStartTimed={i => startTimed(cur, i)}
+          onMoveExUp={() => moveEx(cur, cur - 1)}
+          onMoveExDown={() => moveEx(cur, cur + 1)}
+          canMoveUp={cur > 0}
+          canMoveDown={cur < A.entries.length - 1}
+        />
       )}
     </> : <div className="empty"><div className="ico"><Icon name="shuffle" /></div>{t('Freestyle workout — add your first exercise.')}</div>}
 
@@ -287,16 +375,114 @@ function ActiveWorkout() {
       s.active.entries.push({ id: ex.id, target: { ...cfg }, plan, sets: applyPrescription(buildSets(s, full), plan) })
       s.active.cur = s.active.entries.length - 1
     }), null, S.routines.find(r => r.id === A.routineId)))} icon="plus">{t('Add exercise')}</Button>
+    
+    <WodSection />
+
     <div style={{ height: 10 }} />
     {(() => {
       const exDone = A.entries.filter(e => e.sets.length && e.sets.every(s => s.done)).length
-      const allDone = A.entries.length > 0 && exDone === A.entries.length
+      const allDone = (A.entries.length > 0 && exDone === A.entries.length) || (A.entries.length === 0 && (A.wod?.desc || A.wod?.score))
       return <button className={allDone ? 'btn primary' : 'btn ghost dim'} onClick={finishWorkout}>
         {allDone ? t('Finish workout') : t('Finish workout early · {0} exercises', exDone + '/' + A.entries.length)}
       </button>
     })()}
     <div style={{ height: 40 }} />
   </div>
+}
+
+/* ---------- CrossFit WOD & Notes Card ---------- */
+function WodSection() {
+  const S = useStore(s => s.S)
+  const update = useStore(s => s.update)
+  const wod = S.active?.wod || { type: 'AMRAP', cap: '', desc: '', score: '', notes: '' }
+  const [open, setOpen] = useState(() => !!(wod.desc || wod.score || wod.notes || wod.cap))
+
+  const setWodField = (field, val) => {
+    update(s => {
+      if (!s.active) return
+      s.active.wod = { ...(s.active.wod || { type: 'AMRAP', cap: '', desc: '', score: '', notes: '' }), [field]: val }
+    })
+  }
+
+  const types = ['AMRAP', 'For Time', 'EMOM', 'Tabata', 'Metcon', 'Chipper']
+
+  return (
+    <div className="card" style={{ marginTop: 14, marginBottom: 14, border: open ? '1px solid var(--acc)' : '1px solid var(--border)' }}>
+      <div className="row between" style={{ cursor: 'pointer' }} onClick={() => setOpen(o => !o)}>
+        <div className="row" style={{ gap: 8 }}>
+          <span style={{ fontSize: 18 }}>🔥</span>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 15 }}>{t('CrossFit WOD / Metcon & Notes')}</div>
+            <div className="muted small">
+              {wod.score ? `${wod.type || 'WOD'}: ${wod.score}` : (wod.desc ? wod.desc.slice(0, 35) + '...' : t('Add WOD details, score & notes'))}
+            </div>
+          </div>
+        </div>
+        <Icon name={open ? 'chevronUp' : 'chevronDown'} className="chev" />
+      </div>
+
+      {open && (
+        <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+          <div className="muted small" style={{ marginBottom: 6, fontWeight: 500 }}>{t('WOD Type')}</div>
+          <div className="chips" style={{ marginBottom: 10 }}>
+            {types.map(tp => (
+              <button
+                key={tp}
+                type="button"
+                className={'chip nocap' + ((wod.type || 'AMRAP') === tp ? ' on' : '')}
+                onClick={() => setWodField('type', tp)}
+              >
+                {tp}
+              </button>
+            ))}
+          </div>
+
+          <div className="row" style={{ gap: 8, marginBottom: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div className="muted small" style={{ marginBottom: 4 }}>{t('Time / Cap')}</div>
+              <input
+                className="input"
+                placeholder="ej. 16' / Cap 20'"
+                value={wod.cap || ''}
+                onChange={e => setWodField('cap', e.target.value)}
+              />
+            </div>
+            <div style={{ flex: 1.5 }}>
+              <div className="muted small" style={{ marginBottom: 4 }}>{t('Score / Result')}</div>
+              <input
+                className="input"
+                placeholder="ej. 1 ronda + 40 reps"
+                value={wod.score || ''}
+                onChange={e => setWodField('score', e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 8 }}>
+            <div className="muted small" style={{ marginBottom: 4 }}>{t('WOD Description')}</div>
+            <textarea
+              className="input"
+              rows={2}
+              style={{ width: '100%', resize: 'vertical', fontFamily: 'inherit', fontSize: 14, minHeight: 52 }}
+              placeholder="ej. 200m KB carry, 80 KB taters, 60 knees to chest, 40 KB push press, 200m run"
+              value={wod.desc || ''}
+              onChange={e => setWodField('desc', e.target.value)}
+            />
+          </div>
+
+          <div>
+            <div className="muted small" style={{ marginBottom: 4 }}>{t('Notes / Sensations')}</div>
+            <input
+              className="input"
+              placeholder="ej. Pesos KB 16kg, me quedé en taters en ronda 2"
+              value={wod.notes || ''}
+              onChange={e => setWodField('notes', e.target.value)}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function Workout() {
